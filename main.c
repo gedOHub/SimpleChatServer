@@ -12,10 +12,13 @@
 #include <sys/socket.h> // setsockopt,
 #include <netdb.h>
 #include <arpa/inet.h>  // inet_ntop,
+#include <string.h>     // sterror
+#include <errno.h>      // errno
 
 
 #define CONFIG_FILE "server.conf"
 #define TRUE 1
+#define PENDDING_CONECTIONS 15
 /*
  * 
  */
@@ -88,7 +91,7 @@ int main(int argc, char** argv) {
     // Pasalinu nereikalingus kintamuosius
     free((char *)ip);
     free((char *)port);
-    free(hints);
+    freeaddrinfo(hints);
     /* ===== END Adreso duomenu paieska =====  */
     
     /* ===== Socket kurimas ===== */
@@ -109,11 +112,9 @@ int main(int argc, char** argv) {
             continue;
         }
         
-        printf("Server socket %d\n", *serverSocket);
-        
         /* Nustatau socket opcija, kad leistu bindinti jei jau uzbindintas. Del 
          * nuluzinejimo ir apejimo klaidos kad adresas jau nuadojamas */
-        if (setsockopt(*serverSocket, SOL_SOCKET, SO_REUSEADDR, *option, sizeof(option)) == -1) {
+        if (setsockopt(*serverSocket, SOL_SOCKET, SO_REUSEADDR, option, sizeof(option)) == -1) {
             perror("[Setsockopt] Unable to set socket reuse");
             // Nepasiseke, baigiu programa
             
@@ -125,7 +126,76 @@ int main(int argc, char** argv) {
             
             exit(EXIT_FAILURE);
         }
+        
+        /* Bandau bindinti nurodyta porta ir adresa prie socketo */
+        if (bind(*serverSocket, p->ai_addr, p->ai_addrlen) == -1) {
+            close(*serverSocket);
+            perror("[Bind] Unable to bind");
+            continue;
+        }
+        
+        break;
     }
+    
+    free(option);
+    /* Atlaisvinu rezultatu strukturas */
+    freeaddrinfo(res); 
+    
+    /* Bandau klausytis nurodytu adresu */
+    if (listen(*serverSocket, PENDDING_CONECTIONS) == -1) {
+        perror("[Listen] Unable to listen for connections");
+        
+        free(serverSocket);
+        
+        exit(EXIT_FAILURE);
+    }
+    
+    printf("Waitting for clients to conenct");
+    
+    /* ===== Main loop ===== */
+    fd_set* visiSkaitomiSocket, *skaitomiSocket;
+    // Nustatau i nulius
+    FD_ZERO(visiSkaitomiSocket);
+    FD_ZERO(skaitomiSocket);
+    
+    // Pridedu serverio socketa prei skaitomu saraso
+    FD_SET(*serverSocket, visiSkaitomiSocket);
+    
+    // Kintamasis nurodantis kas kiek laiko tikrinti ar yra skaitomu socketu
+    struct timeval* time;
+    time = malloc(sizeof(struct timeval));
+    // Tikrinsiu kas 10 ms
+    time->tv_sec = 0;       // sekundes
+    time->tv_usec = 10000;  // mikso sekundes
+    
+    // Maksimalus socket numeris
+    int* maxSocket;
+    // Inicizacija
+    maxSocket = malloc(sizeof(int));
+    *maxSocket = -1;
+    
+    // Kliento adresas
+    struct sockaddr_storage* clientAddr = malloc(sizeof(struct sockaddr_storage));
+    struct socklen_t* addressLeng = malloc(sizeof(socklen_t));
+    addressLeng = sizeof(struct sockaddr_storage);
+    int* clientFD = malloc(sizeof(int));
+    
+    while(TRUE) {
+        // Nustatau kurius deskriptroius tikrinsiu
+        *skaitomiSocket = *visiSkaitomiSocket;
+        
+        // Gaunu visus socketus, kurie turi ka nors nuskaityti
+        if (select(maxSocket + 1, skaitomiSocket, NULL, NULL, time)
+                == -1) {
+            fprintf("[Select] %s", strerror(errno));
+        }
+        
+        addressLeng = sizeof &clientAddr;
+        clientFD = accept(serverSocket, (struct sockaddr *)clientAddr, addressLeng);
+    }
+    
+    /* ===== END Main loop ===== */
+    
     // Baigesi nustatyami, tikrinu ar pavyko sukurti socketa
     
     /*
@@ -139,23 +209,12 @@ int main(int argc, char** argv) {
     readSockets = malloc(sizeof(fd_set));
     FD_ZERO(readSockets);
     
-    // Maksimalus socket numeris
-    int* maxSocket;
-    // Inicizacija
-    maxSocket = malloc(sizeof(int));
-    *maxSocket = -1;
-    
     // Iteratorius
     int* iterator;
     iterator = malloc(sizeof(int));
     *iterator = 0;
 
-    // Kintamasis nurodantis kas kiek laiko tikrinti ar yra skaitomu socketu
-    struct timeval* time;
-    time = malloc(sizeof(struct timeval));
-    // Tikrinsiu kas 10 ms
-    time->tv_sec = 0;       // sekundes
-    time->tv_usec = 10000;  // mikso sekundes
+    
     
     
      * */
@@ -165,8 +224,8 @@ int main(int argc, char** argv) {
 //    free(iterator);
 //    free(time);
     free(rezult);
-    freeaddrinfo(res); // free the linked list
-    free(res);
+    //free(res);
+    
     
     return (EXIT_SUCCESS);
 }
